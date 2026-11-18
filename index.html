@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How an AI Agent Plans Your Day</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a NYC subway sign. Each stage is a "stop" on one line; the plan card is the trip. */
+:root {
+  --sign: #1b1d21;
+  --paper: #f4f3ef;
+  --card: #ffffff;
+  --ink: #23252a;
+  --muted: #62656d;
+  --line: #d9d8d2;
+  --goal: #0039a6;
+  --plan: #ff6319;
+  --act: #6cbe45;
+  --check: #fccc0a;
+  --fix: #ee352e;
+  --result: #b933ad;
+  --bad: #c8261f;
+  --good: #2f8a1f;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Source Sans 3", "Segoe UI", Arial, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.5;
+}
+.sign {
+  background: var(--sign);
+  color: #fff;
+  padding: 20px 20px 18px;
+}
+.sign-inner, main { max-width: 1040px; margin: 0 auto; }
+.sign h1 {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(24px, 4vw, 36px);
+  line-height: 1.15;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+.sign p { margin: 0; color: #c9cbd1; max-width: 62ch; }
+.sign-bar { height: 6px; background: linear-gradient(90deg, var(--goal) 0 16.66%, var(--plan) 0 33.33%, var(--act) 0 50%, var(--check) 0 66.66%, var(--fix) 0 83.33%, var(--result) 0); }
+
+main { padding: 24px 20px 40px; display: grid; gap: 24px; }
+
+/* The line of stops */
+.line { position: relative; }
+.line ol {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;
+  position: relative;
+}
+.line ol::before {
+  content: ""; position: absolute; left: 8%; right: 8%; top: 24px; height: 6px;
+  background: var(--line); border-radius: 3px;
+}
+.stop button {
+  all: unset; cursor: pointer; display: grid; justify-items: center; gap: 6px;
+  width: 100%; position: relative; padding: 4px 0;
+}
+.bullet {
+  width: 48px; height: 48px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-family: var(--display); font-weight: 800; font-size: 20px; color: #fff;
+  background: var(--c); border: 4px solid var(--paper);
+  opacity: .45; transition: transform .2s, opacity .2s;
+}
+.stop.dark .bullet { color: var(--sign); }
+.stop-name { font-family: var(--display); font-weight: 700; font-size: 15px; color: var(--muted); }
+.stop.done .bullet { opacity: .85; }
+.stop.current .bullet { opacity: 1; transform: scale(1.15); box-shadow: 0 0 0 3px var(--c); }
+.stop.current .stop-name { color: var(--ink); }
+.stop button:focus-visible .bullet { outline: 3px solid var(--ink); outline-offset: 3px; }
+
+/* Two panels */
+.panels { display: grid; grid-template-columns: 1.1fr 1fr; gap: 20px; align-items: start; }
+.panel {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 22px;
+}
+.stage-label {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted);
+}
+.stage-label i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); display: inline-block; }
+.explain h2 {
+  font-family: var(--display); font-weight: 800; font-size: 26px; line-height: 1.2;
+  margin: 8px 0 12px; text-wrap: balance;
+}
+.explain p { margin: 0 0 12px; max-width: 60ch; }
+.box {
+  border-left: 5px solid var(--c); background: var(--paper);
+  padding: 12px 14px; border-radius: 0 8px 8px 0; margin: 14px 0 0;
+}
+.box b { font-family: var(--display); display: block; font-size: 14px; margin-bottom: 2px; }
+.box p { margin: 0; }
+.say {
+  font-family: var(--body); font-size: 18px; background: var(--sign); color: #fff;
+  padding: 14px 16px; border-radius: 10px 10px 10px 2px; margin: 4px 0 14px;
+}
+.say small { display: block; color: #a9acb4; font-size: 13px; margin-bottom: 4px; }
+.log {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px;
+  background: #15171a; color: #d7f5c9; border-radius: 8px; padding: 12px 14px; margin: 12px 0 0;
+  display: grid; gap: 4px; overflow-x: auto;
+}
+.log .no { color: #ff9d97; }
+
+/* Trip card */
+.trip h3 { font-family: var(--display); font-weight: 800; font-size: 20px; margin: 6px 0 4px; }
+.trip .sub { color: var(--muted); margin: 0 0 14px; font-size: 15px; }
+.trip ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.item {
+  display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+}
+.item time { font-family: var(--display); font-weight: 700; font-variant-numeric: tabular-nums; }
+.item .what b { display: block; font-weight: 600; }
+.item .what span { color: var(--muted); font-size: 14px; }
+.tag {
+  font-family: var(--display); font-weight: 700; font-size: 12px; padding: 3px 8px; border-radius: 99px;
+  white-space: nowrap;
+}
+.tag.draft { background: #ecebe6; color: var(--muted); }
+.tag.ok { background: #e3f3dc; color: var(--good); }
+.tag.bad { background: #fde3e1; color: var(--bad); }
+.tag.new { background: #f3e0f1; color: #8a1f81; }
+.item.is-bad { border-color: var(--bad); background: #fff6f5; }
+.item.is-bad .what b { text-decoration: line-through; text-decoration-color: var(--bad); }
+.item.is-new { border-color: #b933ad; }
+.empty { color: var(--muted); padding: 26px 12px; text-align: center; border: 2px dashed var(--line); border-radius: 8px; }
+
+/* Controls */
+.controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn {
+  font-family: var(--display); font-weight: 700; font-size: 16px;
+  border: 2px solid var(--sign); border-radius: 99px; padding: 10px 22px; cursor: pointer;
+  background: var(--card); color: var(--sign);
+}
+.btn.primary { background: var(--sign); color: #fff; }
+.btn:disabled { opacity: .35; cursor: default; }
+.btn:focus-visible { outline: 3px solid var(--goal); outline-offset: 3px; }
+.count { color: var(--muted); font-size: 15px; }
+
+.loop-note { font-size: 15px; color: var(--muted); max-width: 70ch; margin: 0; }
+
+@media (max-width: 760px) {
+  .panels { grid-template-columns: 1fr; }
+  .bullet { width: 38px; height: 38px; font-size: 16px; }
+  .line ol::before { top: 20px; }
+  .stop-name { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="sign">
+  <div class="sign-inner">
+    <h1>How an AI Agent Plans Your Day</h1>
+    <p>An AI agent does not only answer. It works on a task until the task is done. Follow one agent as it plans a day trip in New York City.</p>
+  </div>
+</header>
+<div class="sign-bar" aria-hidden="true"></div>
+
+<main>
+  <nav class="line" aria-label="Agent stages">
+    <ol id="stops"></ol>
+  </nav>
+
+  <div class="panels">
+    <section class="panel explain" id="explain" aria-live="polite"></section>
+    <section class="panel trip" aria-label="The trip plan">
+      <span class="stage-label" style="--c: var(--sign)"><i></i>The trip plan</span>
+      <h3>One day in New York</h3>
+      <p class="sub">Coffee, art, and walking · 9:00 AM to 6:00 PM</p>
+      <div id="plan"></div>
+    </section>
+  </div>
+
+  <div class="controls">
+    <button class="btn" id="back" type="button">← Back</button>
+    <span class="count" id="count"></span>
+    <button class="btn primary" id="next" type="button">Next →</button>
+  </div>
+
+  <p class="loop-note">Tip: you can also click a stage on the line above, or use the arrow keys. Places in this example are made up, except the famous landmarks.</p>
+</main>
+
+<script>
+const STAGES = [
+  { key: "goal", name: "Goal", color: "--goal", dark: false,
+    title: "The agent gets a goal",
+    html: `<div class="say"><small>You type:</small>Plan a one-day trip in New York for me. I like coffee, art, and walking. Start at 9 AM and finish by 6 PM.</div>
+      <p>First, the agent reads your request and finds the important parts: the <b>task</b> (plan a day), your <b>interests</b> (coffee, art, walking), and the <b>limits</b> (9 AM to 6 PM).</p>
+      <div class="box"><b>Everyday example</b><p>It is like telling a friend, "Plan my Saturday." A good friend first asks what you like and how much time you have.</p></div>` },
+  { key: "plan", name: "Plan", color: "--plan", dark: false,
+    title: "The agent makes a plan",
+    html: `<p>Next, the agent breaks the big task into small steps. It writes a first draft of your day.</p>
+      <p>This is only a draft. The agent has not checked anything yet.</p>
+      <div class="box"><b>Why this matters</b><p>Big tasks are hard to do in one move. Small steps are easier to do and easier to check.</p></div>` },
+  { key: "act", name: "Act", color: "--act", dark: false,
+    title: "The agent takes action",
+    html: `<p>Now the agent uses <b>tools</b>. A tool is anything that helps it get real information, like a map, a search engine, or a website.</p>
+      <p>Here, it looks up opening hours and walking times for each stop.</p>
+      <div class="log" aria-label="What the agent looked up">
+        <span>→ checking map: walking times… done</span>
+        <span>→ checking hours: The Met… open</span>
+        <span>→ checking hours: Chelsea Market… open</span>
+        <span>→ checking hours: The High Line… open</span>
+        <span class="no">→ checking hours: Corner Bean Café… CLOSED today</span>
+      </div>
+      <div class="box"><b>Chatbot vs. agent</b><p>A chatbot would just give you the list. An agent goes and checks it.</p></div>` },
+  { key: "check", name: "Check", color: "--check", dark: true,
+    title: "The agent checks its work",
+    html: `<p>The agent compares the results with your goal. Does the plan still work?</p>
+      <p>It finds a problem: <b>Corner Bean Café is closed today.</b> Your day would start at a locked door.</p>
+      <div class="box"><b>Why this matters</b><p>Checking is what makes an agent useful. It catches mistakes before you do.</p></div>` },
+  { key: "fix", name: "Fix", color: "--fix", dark: false,
+    title: "The agent fixes the problem",
+    html: `<p>The agent does not stop or give up. It looks for another coffee shop that fits your goal:</p>
+      <p>✓ open at 9 AM &nbsp; ✓ close to the next stop, The Met</p>
+      <p>It finds <b>Park Side Coffee</b>, a 5-minute walk from The Met, and updates the plan. Then it <b>checks again</b> to make sure the new plan works.</p>
+      <div class="log" aria-label="What the agent looked up">
+        <span>→ searching: coffee near The Met, open 9 AM…</span>
+        <span>→ found: Park Side Coffee (5 min walk)</span>
+        <span>→ checking the full plan again… all stops open ✓</span>
+      </div>` },
+  { key: "result", name: "Result", color: "--result", dark: false,
+    title: "You get a plan that works",
+    html: `<p>The agent gives you the final plan. Every stop is open, and the day fits between 9 AM and 6 PM.</p>
+      <div class="box"><b>The big idea</b><p>An agent works in a loop: <b>Goal → Plan → Act → Check → Fix</b>. It repeats Act, Check, and Fix until the result matches the goal.</p></div>
+      <div class="box"><b>Try it yourself</b><p>Next time you use an AI agent, watch for these stages. You will see it plan, use tools, check, and fix.</p></div>` }
+];
+
+const DRAFT = [
+  { t: "9:00", n: "Corner Bean Café", d: "Coffee to start the day", id: "cafe" },
+  { t: "10:00", n: "The Met", d: "Art museum on Fifth Avenue" },
+  { t: "1:00", n: "Chelsea Market", d: "Lunch" },
+  { t: "2:30", n: "The High Line", d: "Walk on a park above the street" },
+  { t: "5:00", n: "Hudson River sunset", d: "Short walk to end the day" }
+];
+
+function planFor(i) {
+  if (i === 0) return `<div class="empty">No plan yet. The agent is still reading your goal.</div>`;
+  const rows = DRAFT.map(x => {
+    let cls = "", tag = `<span class="tag draft">Draft</span>`, item = x;
+    if (i >= 2) tag = `<span class="tag ok">Open ✓</span>`;
+    if (x.id === "cafe") {
+      if (i === 2 || i === 3) { cls = "is-bad"; tag = `<span class="tag bad">Closed ✗</span>`; }
+      if (i >= 4) {
+        item = { t: "9:00", n: "Park Side Coffee", d: "5-minute walk to The Met" };
+        cls = i === 4 ? "is-new" : "";
+        tag = i === 4 ? `<span class="tag new">New</span>` : `<span class="tag ok">Open ✓</span>`;
+      }
+    }
+    return `<li class="item ${cls}"><time>${item.t}</time><span class="what"><b>${item.n}</b><span>${item.d}</span></span>${tag}</li>`;
+  }).join("");
+  return `<ul>${rows}</ul>`;
+}
+
+let cur = 0;
+const stopsEl = document.getElementById("stops");
+stopsEl.innerHTML = STAGES.map((s, i) => `
+  <li class="stop ${s.dark ? "dark" : ""}" style="--c: var(${s.color})">
+    <button type="button" id="stop-${s.key}" data-i="${i}" aria-label="Stage ${i + 1}: ${s.name}">
+      <span class="bullet">${i + 1}</span><span class="stop-name">${s.name}</span>
+    </button>
+  </li>`).join("");
+
+function render() {
+  const s = STAGES[cur];
+  document.querySelectorAll(".stop").forEach((el, i) => {
+    el.classList.toggle("current", i === cur);
+    el.classList.toggle("done", i < cur);
+    el.querySelector("button").setAttribute("aria-current", i === cur ? "step" : "false");
+  });
+  const ex = document.getElementById("explain");
+  ex.style.setProperty("--c", `var(${s.color})`);
+  ex.innerHTML = `<span class="stage-label"><i></i>Stage ${cur + 1} of 6 · ${s.name}</span><h2>${s.title}</h2>${s.html}`;
+  document.getElementById("plan").innerHTML = planFor(cur);
+  document.getElementById("back").disabled = cur === 0;
+  const next = document.getElementById("next");
+  next.textContent = cur === STAGES.length - 1 ? "Start over ↺" : "Next →";
+  document.getElementById("count").textContent = `${cur + 1} / ${STAGES.length}`;
+}
+function go(i) { cur = Math.max(0, Math.min(STAGES.length - 1, i)); render(); }
+
+stopsEl.addEventListener("click", e => { const b = e.target.closest("button"); if (b) go(+b.dataset.i); });
+document.getElementById("back").addEventListener("click", () => go(cur - 1));
+document.getElementById("next").addEventListener("click", () => go(cur === STAGES.length - 1 ? 0 : cur + 1));
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight") go(cur + 1);
+  if (e.key === "ArrowLeft") go(cur - 1);
+});
+render();
+</script>
+</body>
+</html>
